@@ -48,27 +48,42 @@ class Fence(object):
                 hostid = int(license, 16)
         return hostid
 
-    def load_disks(self):
+    def _load_disks(self, drives):
+
         logger.debug('Loading disks')
-        self._disks.clear()
+
         unsupported = []
         remote_keys = set()
 
-        # TODO: blacklist disks used by dumpdev
-        for i in sysctl.filter('kern.disks')[0].value.split():
-            if not i.startswith('da'):
-                continue
-            try:
+        for i in drives:
+            if i.startswith('nvd'):
+                disk = Disk(self, i, is_nvme=True)
+            else:
                 disk = Disk(self, i)
+
+            try:
                 remote_keys.update(disk.get_keys()[1])
             except (OSError, RuntimeError):
-                logger.debug('Disk %s does not support reservations.', disk)
                 unsupported.append(i)
                 continue
+
             self._disks.add(disk)
 
+        return unsupported, remote_keys
+
+    def load_disks(self):
+
+        self._disks.clear()
+
+        # TODO: blacklist disks used by dumpdev
+        devices = sysctl.filter('kern.disks')[0].value.split()
+        drives = [i for i in devices if i.startswith('da')]
+        drives += [i for i in devices if i.startswith('nvd')]
+
+        unsupported, remote_keys = self._load_disks(drives)
+
         if unsupported:
-            logger.info('Disks without support for SCSI-3 PR: %s.', ' '.join(unsupported))
+            logger.debug('Disks without support for SCSI-3 PR: %s.', ' '.join(unsupported))
 
         return remote_keys
 
@@ -110,7 +125,7 @@ class Fence(object):
         return newkey
 
     def loop(self, key):
-        firstkey = key
+
         while True:
 
             if self._reload:
@@ -118,7 +133,6 @@ class Fence(object):
                 key = self.init(True)
                 self._reload = False
 
-            oldkey = key
             if key > 0xffffffff:
                 key = 2
             else:
